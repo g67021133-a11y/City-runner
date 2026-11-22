@@ -10,7 +10,7 @@ button{background:#ffb52e;border:0;border-radius:12px;padding:13px 24px;font-siz
 #turn{position:fixed;top:12px;right:12px;color:#fff;background:#0008;padding:8px 12px;border-radius:12px}
 </style></head><body>
 <div id="hud">🪙 <span id="coins">0</span><br>🏁 <span id="distance">0</span> м<br><button id="shopOpen" style="padding:7px 12px;font-size:14px;margin-top:7px">Магазин</button></div><div id="turn">Беги вперёд!</div>
-<div id="help">← → поворот · ↑ прыжок · ↓ подкат · На телефоне — свайпы</div>
+<div id="help">← → смена полосы · ↑ прыжок · ↓ подкат · На телефоне — свайпы</div>
 <div id="shop" style="display:none;position:fixed;inset:0;background:#000b;z-index:6;color:white;align-items:center;justify-content:center">
 <div class="panel" style="width:min(92vw,390px);max-height:85vh;overflow:auto">
 <h1>🛍️ Магазин</h1><p>Твои монеты: <b id="shopCoins">0</b></p><div id="shopItems"></div>
@@ -38,7 +38,9 @@ const skins=[
 {id:'gold',name:'Золотой бегун',price:90,color:0xe5ad22},
 {id:'purple',name:'Неоновый бегун',price:150,color:0x874bd1}
 ];
-let pos=new THREE.Vector3(0,0,0),dir=new THREE.Vector3(0,0,-1),targetDir=dir.clone(),turnPending=0,jump=0,slide=0;
+let pos=new THREE.Vector3(0,0,0),dir=new THREE.Vector3(0,0,-1),targetDir=dir.clone();
+let lane=1,laneTarget=1,jump=0,slide=0;
+const laneX=[-2.7,0,2.7];
 function makeCitySegment(z,turn=false){
  let g=new THREE.Group();scene.add(g);g.position.z=z;
  box(g,9,.18,30,roadMat,0,-.12,-15);box(g,1.5,.22,30,sideMat,-5.25,-.08,-15);box(g,1.5,.22,30,sideMat,5.25,-.08,-15);
@@ -85,26 +87,43 @@ function renderShop(){
 document.getElementById('shopOpen').onclick=()=>{renderShop();document.getElementById('shop').style.display='flex';};
 document.getElementById('shopClose').onclick=()=>document.getElementById('shop').style.display='none';
 applySkin();
-function reset(){segments.forEach(x=>scene.remove(x));segments=[];coins=[];hazards=[];score=0;dist=0;speed=13;pos.set(0,0,0);dir.set(0,0,-1);targetDir.copy(dir);turnPending=0;jump=0;slide=0;player.position.set(0,0,0);for(let i=0;i<7;i++)makeCitySegment(-i*30);updateHud();}
+function reset(){segments.forEach(x=>scene.remove(x));segments=[];coins=[];hazards=[];score=0;dist=0;speed=13;pos.set(0,0,0);dir.set(0,0,-1);targetDir.copy(dir);lane=1;laneTarget=1;jump=0;slide=0;player.position.set(0,0,0);player.scale.set(1,1,1);for(let i=0;i<7;i++)makeCitySegment(-i*30);updateHud();}
 function end(){active=false;gameOver=true;document.querySelector('.panel').innerHTML='<h1>Забег окончен!</h1><p>Монеты: '+score+'<br>Дистанция: '+Math.floor(dist)+' м</p><button id="again">Ещё раз</button>';document.getElementById('overlay').style.display='flex';document.getElementById('again').onclick=begin;}
 function begin(){reset();gameOver=false;active=true;document.getElementById('overlay').style.display='none';}
 document.getElementById('start').onclick=begin;
-function action(a){if(!active)return;if(a==='left'||a==='right'){turnPending=a==='left'?-1:1;document.getElementById('turn').textContent='Поворот: '+(a==='left'?'налево':'направо');}if(a==='jump'&&jump===0)jump=.01;if(a==='slide')slide=.55;}
+function action(a){
+ if(!active)return;
+ if(a==='left'||a==='right'){
+  laneTarget=Math.max(0,Math.min(2,laneTarget+(a==='left'?-1:1)));
+  document.getElementById('turn').textContent=['Левая полоса','Центральная полоса','Правая полоса'][laneTarget];
+ }
+ if(a==='jump'&&jump===0&&slide<=0)jump=.001;
+ if(a==='slide'&&jump===0)slide=.7;
+}
 addEventListener('keydown',e=>{if(e.key==='ArrowLeft'||e.key==='a')action('left');if(e.key==='ArrowRight'||e.key==='d')action('right');if(e.key==='ArrowUp'||e.key==='w'||e.key===' ')action('jump');if(e.key==='ArrowDown'||e.key==='s')action('slide');});
 let sx=0,sy=0;addEventListener('touchstart',e=>{sx=e.touches[0].clientX;sy=e.touches[0].clientY},{passive:true});addEventListener('touchend',e=>{let dx=e.changedTouches[0].clientX-sx,dy=e.changedTouches[0].clientY-sy;if(Math.abs(dx)>Math.abs(dy))action(dx<0?'left':'right');else action(dy<0?'jump':'slide')},{passive:true});
 let last=performance.now();
 function animate(now){requestAnimationFrame(animate);let dt=Math.min((now-last)/1000,.04);last=now;
  if(active){
   dist+=speed*dt;speed=Math.min(20,13+dist/500);
-  if(turnPending){let angle=turnPending*Math.PI/2;targetDir.applyAxisAngle(new THREE.Vector3(0,1,0),angle).normalize();turnPending=0;turnIndex++;document.getElementById('turn').textContent='Поворот выполнен';}
-  dir.lerp(targetDir,Math.min(1,dt*5)).normalize();pos.addScaledVector(dir,speed*dt);
-  player.position.set(pos.x,0,pos.z);player.rotation.y=Math.atan2(-dir.x,-dir.z);
-  if(jump>0){jump+=dt*3.8;player.position.y=Math.sin(Math.min(jump,Math.PI))*1.5;if(jump>=Math.PI)jump=0;}
-  if(slide>0){slide-=dt;player.scale.y=.55;}else player.scale.y=1;
-  let forward=new THREE.Vector3(0,0,-1).applyQuaternion(player.quaternion);camera.position.lerp(new THREE.Vector3(pos.x-forward.x*7,5.1,pos.z-forward.z*7),dt*4);camera.lookAt(pos.x,1.2,pos.z-5);
+  pos.z-=speed*dt;
+  pos.x+=(laneX[laneTarget]-pos.x)*Math.min(1,dt*12);
+  lane=laneTarget;
+  player.position.set(pos.x,0,pos.z);player.rotation.y=0;
+  if(jump>0){
+   jump+=dt*2.8;
+   player.position.y=Math.sin(Math.min(jump,Math.PI))*2.05;
+   if(jump>=Math.PI){jump=0;player.position.y=0;}
+  }
+  if(slide>0){slide-=dt;player.scale.y=.48;}else player.scale.y=1;
+  camera.position.lerp(new THREE.Vector3(pos.x,5.1,pos.z+7),dt*5);camera.lookAt(pos.x,1.2,pos.z-5);
   for(let s of segments){if(s.position.z-pos.z>35){s.position.z-=210;}}
-  for(let c of coins){if(!c.got){c.mesh.rotation.y+=dt*3;let world=c.mesh.getWorldPosition(new THREE.Vector3());if(world.distanceTo(new THREE.Vector3(pos.x,1.2,pos.z))<1.25){c.got=true;c.mesh.visible=false;score++;updateHud();}}}
-  for(let h of hazards){if(!h.hit){let world=h.mesh.getWorldPosition(new THREE.Vector3());if(world.distanceTo(new THREE.Vector3(pos.x,1,pos.z))<1.15&&player.position.y<.7&&slide<=0){h.hit=true;end();}}}
+  for(let c of coins){if(!c.got){c.mesh.rotation.y+=dt*3;let world=c.mesh.getWorldPosition(new THREE.Vector3());if(Math.abs(world.x-pos.x)<1.35&&Math.abs(world.z-pos.z)<1.45){c.got=true;c.mesh.visible=false;score++;updateHud();}}}
+  for(let h of hazards){if(!h.hit){let world=h.mesh.getWorldPosition(new THREE.Vector3());if(Math.abs(world.x-pos.x)<1.15&&Math.abs(world.z-pos.z)<1.35){
+    const clearedByJump=player.position.y>1.25;
+    const clearedBySlide=slide>0;
+    if(!clearedByJump&&!clearedBySlide){h.hit=true;end();}
+   }}}
   // Remove stale pickup refs to keep the run light
   coins=coins.filter(c=>c.mesh.parent);hazards=hazards.filter(h=>h.mesh.parent);
   updateHud();
