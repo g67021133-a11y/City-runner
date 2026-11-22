@@ -1,0 +1,116 @@
+<!doctype html>
+<html lang="ru"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no"><title>City Runner 3D</title>
+<style>
+*{box-sizing:border-box}html,body{margin:0;width:100%;height:100%;overflow:hidden;background:#111;font-family:Arial,sans-serif}canvas{display:block}
+#hud{position:fixed;top:12px;left:12px;color:white;font-weight:700;text-shadow:0 2px 5px #000;font-size:18px;z-index:2}
+#help{position:fixed;bottom:12px;left:50%;transform:translateX(-50%);color:#fff;background:#0009;padding:9px 14px;border-radius:14px;font-size:13px;text-align:center;white-space:nowrap}
+#overlay{position:fixed;inset:0;display:flex;align-items:center;justify-content:center;background:#0009;color:white;z-index:4;text-align:center}
+.panel{background:#18212beF;padding:26px;border:1px solid #ffffff44;border-radius:20px;max-width:340px;margin:20px}
+button{background:#ffb52e;border:0;border-radius:12px;padding:13px 24px;font-size:17px;font-weight:bold;margin-top:10px}
+#turn{position:fixed;top:12px;right:12px;color:#fff;background:#0008;padding:8px 12px;border-radius:12px}
+</style></head><body>
+<div id="hud">🪙 <span id="coins">0</span><br>🏁 <span id="distance">0</span> м<br><button id="shopOpen" style="padding:7px 12px;font-size:14px;margin-top:7px">Магазин</button></div><div id="turn">Беги вперёд!</div>
+<div id="help">← → поворот · ↑ прыжок · ↓ подкат · На телефоне — свайпы</div>
+<div id="shop" style="display:none;position:fixed;inset:0;background:#000b;z-index:6;color:white;align-items:center;justify-content:center">
+<div class="panel" style="width:min(92vw,390px);max-height:85vh;overflow:auto">
+<h1>🛍️ Магазин</h1><p>Твои монеты: <b id="shopCoins">0</b></p><div id="shopItems"></div>
+<button id="shopClose">Закрыть</button></div></div>
+<div id="overlay"><div class="panel"><h1> CITY RUNNER 3D</h1><p>Ты автоматически бежишь по городу. На перекрёстках выбирай направление!</p><button id="start">Начать забег</button></div></div>
+<script type="module">
+import * as THREE from 'https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js';
+const scene=new THREE.Scene(); scene.background=new THREE.Color(0x87b9d8); scene.fog=new THREE.Fog(0x87b9d8,35,145);
+const camera=new THREE.PerspectiveCamera(65,innerWidth/innerHeight,.1,250);
+const renderer=new THREE.WebGLRenderer({antialias:true});renderer.setSize(innerWidth,innerHeight);renderer.setPixelRatio(Math.min(devicePixelRatio,2));renderer.shadowMap.enabled=true;document.body.appendChild(renderer.domElement);
+scene.add(new THREE.HemisphereLight(0xffffff,0x53606a,2));const sun=new THREE.DirectionalLight(0xffffff,2.2);sun.position.set(-15,30,20);sun.castShadow=true;scene.add(sun);
+const mat=(c)=>new THREE.MeshStandardMaterial({color:c,roughness:.85});
+const roadMat=mat(0x34383d),sideMat=mat(0x777b7c),white=mat(0xf4e7bf),gold=mat(0xffc928),skin=mat(0xf0b98b),shirt=mat(0x1679c5),pants=mat(0x252c3d);
+const player=new THREE.Group();scene.add(player);
+function box(parent,w,h,d,m,x,y,z){let o=new THREE.Mesh(new THREE.BoxGeometry(w,h,d),m);o.position.set(x,y,z);o.castShadow=true;o.receiveShadow=true;parent.add(o);return o}
+box(player,.65,.85,.38,shirt,0,1.25,0);box(player,.48,.48,.42,skin,0,1.95,0);
+box(player,.22,.85,.24,pants,-.19,.43,0);box(player,.22,.85,.24,pants,.19,.43,0);
+box(player,.18,.7,.2,skin,-.43,1.28,0);box(player,.18,.7,.2,skin,.43,1.28,0);
+let segments=[],coins=[],hazards=[];let score=0,dist=0,speed=13,active=false,gameOver=false,turnIndex=0;
+let ownedSkins=JSON.parse(localStorage.getItem('cityRunnerSkins')||'["blue"]');
+let equippedSkin=localStorage.getItem('cityRunnerEquipped')||'blue';
+const skins=[
+{id:'blue',name:'Городской бегун',price:0,color:0x1679c5},
+{id:'red',name:'Красный спринтер',price:35,color:0xd94343},
+{id:'gold',name:'Золотой бегун',price:90,color:0xe5ad22},
+{id:'purple',name:'Неоновый бегун',price:150,color:0x874bd1}
+];
+let pos=new THREE.Vector3(0,0,0),dir=new THREE.Vector3(0,0,-1),targetDir=dir.clone(),turnPending=0,jump=0,slide=0;
+function makeCitySegment(z,turn=false){
+ let g=new THREE.Group();scene.add(g);g.position.z=z;
+ box(g,9,.18,30,roadMat,0,-.12,-15);box(g,1.5,.22,30,sideMat,-5.25,-.08,-15);box(g,1.5,.22,30,sideMat,5.25,-.08,-15);
+ for(let i=0;i<8;i++)box(g,.12,.025,1.6,white,0,.0,-i*4-1);
+ for(let side of [-1,1]) for(let i=0;i<3;i++){
+  let h=7+Math.random()*16,w=3+Math.random()*3,d=4+Math.random()*4;
+  let colors=[0xb7a18a,0x8c9ba8,0xd2b88e,0x7e8f86,0xb6b8c2];let b=box(g,w,h,d,mat(colors[Math.floor(Math.random()*colors.length)]),side*(8+i*5),h/2-0.1,-i*10-8);
+  box(g,w*.8,.25,d*.8,mat(0x343d4a),b.position.x,h*.72,b.position.z-d/2-.02);
+  for(let yy=2;yy<h-1;yy+=3)for(let xx=-1;xx<=1;xx++)box(g,.45,.8,.08,mat(0x83c5d8),b.position.x+xx,b.position.y-h/2+yy,b.position.z-d/2-.06);
+ }
+ // coins and occasional roadblock
+ for(let i=0;i<10;i++){let c=new THREE.Mesh(new THREE.TorusGeometry(.38,.12,8,16),gold);c.position.set((Math.random()-.5)*3.8,1.25,-3-i*2.5);g.add(c);coins.push({mesh:c,got:false});}
+ if(Math.random()<.55){let h=box(g,1.2,1.25,1,mat(0xd94a35),(Math.random()-.5)*5, .65,-17);hazards.push({mesh:h,hit:false});}
+ segments.push(g);
+}
+for(let i=0;i<7;i++)makeCitySegment(-i*30);
+function updateHud(){
+ document.getElementById('coins').textContent=score;
+ document.getElementById('distance').textContent=Math.floor(dist);
+ document.getElementById('shopCoins').textContent=score;
+}
+function applySkin(){const s=skins.find(x=>x.id===equippedSkin)||skins[0];shirt.color.setHex(s.color);}
+function renderShop(){
+ const root=document.getElementById('shopItems');root.innerHTML='';
+ document.getElementById('shopCoins').textContent=score;
+ skins.forEach(s=>{
+  const owned=ownedSkins.includes(s.id),equipped=equippedSkin===s.id;
+  const row=document.createElement('div');
+  row.style.cssText='display:flex;align-items:center;justify-content:space-between;gap:10px;padding:10px 0;border-bottom:1px solid #ffffff33;text-align:left';
+  const info=document.createElement('div');
+  info.innerHTML='<b>'+s.name+'</b><br><small>'+(s.price===0?'Бесплатно':'🪙 '+s.price)+'</small>';
+  const btn=document.createElement('button');btn.style.cssText='margin:0;padding:9px 12px;font-size:13px';
+  btn.textContent=equipped?'Выбрано':owned?'Надеть':'Купить';btn.disabled=equipped;
+  btn.onclick=()=>{
+   if(owned){equippedSkin=s.id;localStorage.setItem('cityRunnerEquipped',s.id);applySkin();renderShop();return;}
+   if(score<s.price){btn.textContent='Не хватает монет';return;}
+   score-=s.price;ownedSkins.push(s.id);equippedSkin=s.id;
+   localStorage.setItem('cityRunnerSkins',JSON.stringify(ownedSkins));
+   localStorage.setItem('cityRunnerEquipped',s.id);applySkin();updateHud();renderShop();
+  };
+  row.append(info,btn);root.append(row);
+ });
+}
+document.getElementById('shopOpen').onclick=()=>{renderShop();document.getElementById('shop').style.display='flex';};
+document.getElementById('shopClose').onclick=()=>document.getElementById('shop').style.display='none';
+applySkin();
+function reset(){segments.forEach(x=>scene.remove(x));segments=[];coins=[];hazards=[];score=0;dist=0;speed=13;pos.set(0,0,0);dir.set(0,0,-1);targetDir.copy(dir);turnPending=0;jump=0;slide=0;player.position.set(0,0,0);for(let i=0;i<7;i++)makeCitySegment(-i*30);updateHud();}
+function end(){active=false;gameOver=true;document.querySelector('.panel').innerHTML='<h1>Забег окончен!</h1><p>Монеты: '+score+'<br>Дистанция: '+Math.floor(dist)+' м</p><button id="again">Ещё раз</button>';document.getElementById('overlay').style.display='flex';document.getElementById('again').onclick=begin;}
+function begin(){reset();gameOver=false;active=true;document.getElementById('overlay').style.display='none';}
+document.getElementById('start').onclick=begin;
+function action(a){if(!active)return;if(a==='left'||a==='right'){turnPending=a==='left'?-1:1;document.getElementById('turn').textContent='Поворот: '+(a==='left'?'налево':'направо');}if(a==='jump'&&jump===0)jump=.01;if(a==='slide')slide=.55;}
+addEventListener('keydown',e=>{if(e.key==='ArrowLeft'||e.key==='a')action('left');if(e.key==='ArrowRight'||e.key==='d')action('right');if(e.key==='ArrowUp'||e.key==='w'||e.key===' ')action('jump');if(e.key==='ArrowDown'||e.key==='s')action('slide');});
+let sx=0,sy=0;addEventListener('touchstart',e=>{sx=e.touches[0].clientX;sy=e.touches[0].clientY},{passive:true});addEventListener('touchend',e=>{let dx=e.changedTouches[0].clientX-sx,dy=e.changedTouches[0].clientY-sy;if(Math.abs(dx)>Math.abs(dy))action(dx<0?'left':'right');else action(dy<0?'jump':'slide')},{passive:true});
+let last=performance.now();
+function animate(now){requestAnimationFrame(animate);let dt=Math.min((now-last)/1000,.04);last=now;
+ if(active){
+  dist+=speed*dt;speed=Math.min(20,13+dist/500);
+  if(turnPending){let angle=turnPending*Math.PI/2;targetDir.applyAxisAngle(new THREE.Vector3(0,1,0),angle).normalize();turnPending=0;turnIndex++;document.getElementById('turn').textContent='Поворот выполнен';}
+  dir.lerp(targetDir,Math.min(1,dt*5)).normalize();pos.addScaledVector(dir,speed*dt);
+  player.position.set(pos.x,0,pos.z);player.rotation.y=Math.atan2(-dir.x,-dir.z);
+  if(jump>0){jump+=dt*3.8;player.position.y=Math.sin(Math.min(jump,Math.PI))*1.5;if(jump>=Math.PI)jump=0;}
+  if(slide>0){slide-=dt;player.scale.y=.55;}else player.scale.y=1;
+  let forward=new THREE.Vector3(0,0,-1).applyQuaternion(player.quaternion);camera.position.lerp(new THREE.Vector3(pos.x-forward.x*7,5.1,pos.z-forward.z*7),dt*4);camera.lookAt(pos.x,1.2,pos.z-5);
+  for(let s of segments){if(s.position.z-pos.z>35){s.position.z-=210;}}
+  for(let c of coins){if(!c.got){c.mesh.rotation.y+=dt*3;let world=c.mesh.getWorldPosition(new THREE.Vector3());if(world.distanceTo(new THREE.Vector3(pos.x,1.2,pos.z))<1.25){c.got=true;c.mesh.visible=false;score++;updateHud();}}}
+  for(let h of hazards){if(!h.hit){let world=h.mesh.getWorldPosition(new THREE.Vector3());if(world.distanceTo(new THREE.Vector3(pos.x,1,pos.z))<1.15&&player.position.y<.7&&slide<=0){h.hit=true;end();}}}
+  // Remove stale pickup refs to keep the run light
+  coins=coins.filter(c=>c.mesh.parent);hazards=hazards.filter(h=>h.mesh.parent);
+  updateHud();
+ }
+ renderer.render(scene,camera);
+}
+camera.position.set(0,5,8);camera.lookAt(0,1,0);requestAnimationFrame(animate);
+addEventListener('resize',()=>{camera.aspect=innerWidth/innerHeight;camera.updateProjectionMatrix();renderer.setSize(innerWidth,innerHeight);});
+</script></body></html>
